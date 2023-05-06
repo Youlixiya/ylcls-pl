@@ -158,6 +158,10 @@ class COVIDModel(pl.LightningModule):
             if self.args.use_wandb and train:
                 Img = wandb.Image(img, caption=f"detect_image_{cnt}")
                 detect_table.add_data(Img, self.index2label[arg], conf, t)
+        if self.args.use_wandb and train:
+            wandb.log({
+                "detect_table": detect_table
+            })
     def save_metrics_csv(self):
         loss_df = pd.DataFrame({'train_loss': self.metrics.metrics_dict['train_loss_list'],
                                 'valid_loss': self.metrics.metrics_dict['valid_loss_list'],
