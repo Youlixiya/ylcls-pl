@@ -46,7 +46,7 @@ class COVIDDataset(Dataset):
         return len(self.images_path_list)
     def __getitem__(self, idx):
         image = Image.open(self.images_path_list[idx]).convert('RGB')
-        return self.tranformers(image), torch.LongTensor([int(self.targets_list[idx])])
+        return self.tranformers(image), torch.LongTensor([int(self.targets_list[idx])]), self.images_path_list[idx]
 if __name__ == '__main__':
     dataset = COVIDDataset(COVID_config, 'train')
     print(dataset[0][0].shape)

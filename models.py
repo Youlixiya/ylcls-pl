@@ -18,24 +18,19 @@ from PIL import Image, ImageDraw, ImageFont
 from torchvision.transforms import transforms as T
 from datasets import COVIDDataset, get_images_path, get_index2label
 
-
-
-class COVIDModel(pl.LightningModule):
+class Classification(pl.LightningModule):
     def __init__(self, args : Namespace):
-        super(COVIDModel, self).__init__()
+        super(Classification, self).__init__()
         self.args = args
         self.save_hyperparameters(args)
         self.model = timm.create_model(**args.model_args)
         self.metrics = Metrics(args.model_args['num_classes'])
         self.index2label = get_index2label(args.root_path)
-        # self.train_loss = MeanMetric()
-        # self.val_loss = MeanMetric()
-        # self.train_acc = Accuracy(task='multiclass', num_classes=2)
-        # self.val_acc = Accuracy(task='multiclass', num_classes=2)
         self.loss_fn = nn.CrossEntropyLoss()
     def setup(self, stage: str) -> None:
         self.train_dataset = COVIDDataset(self.args, 'train')
         self.val_dataset = COVIDDataset(self.args, 'valid')
+        self.test_dataset = COVIDDataset(self.args, 'test')
     def train_dataloader(self):
         return DataLoader(self.train_dataset,
                                 batch_size=self.args.batch_size,
@@ -50,11 +45,18 @@ class COVIDModel(pl.LightningModule):
                                 num_workers=self.args.workers,
                                 pin_memory=True,
                                 drop_last=True)
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset,
+                          batch_size=1,
+                          shuffle=False,
+                          num_workers=self.args.workers,
+                          pin_memory=True,
+                          drop_last=True)
     def configure_optimizers(self):
         self.optimizer = eval(self.args.optimizer)(self.model.parameters(), lr=self.args.lr)
         return self.optimizer
     def training_step(self, batch, batch_nb):
-        train_images, train_targets = batch
+        train_images, train_targets, _ = batch
         b = train_images.shape[0]
         train_preds = self.model(train_images)
         train_loss = self.loss_fn(train_preds, train_targets.reshape(b))
@@ -67,7 +69,7 @@ class COVIDModel(pl.LightningModule):
                  )
         return train_loss
     def validation_step(self, batch, batch_nb):
-        valid_images, valid_targets = batch
+        valid_images, valid_targets, _ = batch
         b = valid_images.shape[0]
         valid_preds = self.model(valid_images)
         valid_loss = self.loss_fn(valid_preds, valid_targets.reshape(b))
@@ -113,30 +115,29 @@ class COVIDModel(pl.LightningModule):
     def test(self, save_img = True, train = False):
         save_path = f'{self.args.exp_name}/detection'
         os.makedirs(save_path, exist_ok=True)
-        images_list, _ = get_images_path(self.args.root_path, 'test')
-        transformers = T.Compose(
-            [
-                T.Resize((self.args.image_size, self.args.image_size)),
-                T.ToTensor(),
-                T.Normalize(0.5, 0.5)
-            ]
-        )
+        # images_list, _ = get_images_path(self.args.root_path, 'test')
+        # transformers = T.Compose(
+        #     [
+        #         T.Resize((self.args.image_size, self.args.image_size)),
+        #         T.ToTensor(),
+        #         T.Normalize(0.5, 0.5)
+        #     ]
+        # )
         cnt = 0
         if self.args.use_wandb and train:
             detect_table = wandb.Table(columns=['detect_image', 'pred_label', 'conf', 'detect_time(ms)'])
         else:
             detect_table = None
-        for img in images_list:
-            image_name = img.split('/')[-1]
-            img = Image.open(img).convert('RGB')
-            img_tensor = transformers(img).unsqueeze(0).to(self.device)
+        for img, target, img_path, in self.test_dataloader():
+            image_name = img_path[0].split('/')[-1]
+            img_raw = Image.open(img_path[0]).convert('RGB')
             t1 = time.time()
-            out = self.model(img_tensor).softmax(-1).squeeze().cpu()
+            out = self.model(img.to(self.device)).softmax(-1).squeeze().cpu()
             t2 = time.time()
             t = int((t2 - t1) * 1000)
             arg = out.argmax().item()
             conf = round(out[arg].item() * 100, 2)
-            draw = ImageDraw.Draw(img)
+            draw = ImageDraw.Draw(img_raw)
             # font = cv2.FONT_HERSHEY_SIMPLEX
             font_size = int(25 * self.args.image_size / 224)
             plat = platform.platform()
@@ -148,15 +149,15 @@ class COVIDModel(pl.LightningModule):
             # img_detected = cv2.putText(img_detected, f'conf:{conf}', (10, 60), font, 1, (255, 255, 255), 1)
             box1 = (int(10 * self.args.image_size / 224), int(10 * self.args.image_size / 224))
             box2 = (int(10 * self.args.image_size / 224), int(40 * self.args.image_size / 224))
-            draw.text(box1, f'label:{self.index2label[arg]}', font=font_type, fill=(144, 144, 144))
-            draw.text(box2, f'conf:{conf}', font=font_type, fill=(144, 144, 144))
+            draw.text(box1, f'label:{self.index2label[arg]}', font=font_type, fill=(255, 255, 255))
+            draw.text(box2, f'conf:{conf}', font=font_type, fill=(255, 255, 255))
             print(f'image_index:{image_name} detect_time:{t}ms label:{self.index2label[arg]} conf:{conf}')
             if save_img:
                 image_save_path = f'{save_path}/{image_name}'
-                img.save(image_save_path)
+                img_raw.save(image_save_path)
                 # cv2.imwrite(image_save_path, img_detected)
             if self.args.use_wandb and train:
-                Img = wandb.Image(img, caption=f"detect_image_{cnt}")
+                Img = wandb.Image(img_raw, caption=f"detect_image_{cnt}")
                 detect_table.add_data(Img, self.index2label[arg], conf, t)
         if self.args.use_wandb and train:
             wandb.log({

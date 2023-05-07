@@ -1,10 +1,9 @@
 from configs import COVID_config
-from models import COVIDModel
+from models import Classification
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import WandbLogger
-def main():
-    args = COVID_config
+def main(args):
     seed_everything(args.seed)
     if args.use_wandb:
         if args.wandb_id:
@@ -19,7 +18,7 @@ def main():
                     log_model=True)
     else:
         wandb_logger=None
-    model = COVIDModel(args)
+    cls = Classification(args)
     checkpoint_callback = ModelCheckpoint(dirpath=f'{args.exp_name}/ckpts',
                                           filename='{epoch}-{val_accuracy}',
                                           monitor='val_accuracy',
@@ -36,8 +35,8 @@ def main():
                       num_sanity_val_steps=0,
                       benchmark=True)
     if args.ckpt_path:
-        trainer.fit(model, ckpt_path=args.ckpt_path)
+        trainer.fit(cls, ckpt_path=args.ckpt_path)
     else:
-        trainer.fit(model)
+        trainer.fit(cls)
 if __name__ == '__main__':
-    main()
+    main(COVID_config)
